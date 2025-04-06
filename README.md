@@ -262,17 +262,6 @@ python run_renal_simulation.py
 - matplotlib
 - dataclasses
 
-## References
-
-Based on the physiological model described in:
-- Original R implementation by K. Melissa Hallow
-- University of Georgia, Athens, GA
-- October 2016
-
-## License
-
-See the LICENSE file for details.
-
 ## Detailed Physiological Mechanisms and Mathematical Models
 
 ### 1. Glomerular Filtration Dynamics
