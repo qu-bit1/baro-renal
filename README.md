@@ -189,6 +189,16 @@ The model generates dynamic responses of various physiological variables over ti
 - Aldosterone levels
 - ADH and Osmolarity
 
+### Example Simulation Results
+
+#### Overall Renal Function
+![Renal Simulation Results](renal_simulation_results.png)
+*Figure 1: Dynamic responses of key physiological variables over time, including blood pressure, renal blood flow, and hormonal regulation.*
+
+#### Neural Control Mechanisms
+![Neural Mechanisms Results](neural_mechanisms_results.png)
+*Figure 2: Neural control responses showing sympathetic and parasympathetic activity, baroreceptor firing, and their effects on cardiovascular function.*
+
 ## Physiological Insights
 
 The model demonstrates:
