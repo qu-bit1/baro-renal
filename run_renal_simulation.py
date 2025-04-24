@@ -2,6 +2,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from renal_model import RenalModel, RenalModelParameters
 from renal_tubular import RenalTubular
+from neural_mechanisms import NeuralControl
 from scipy.integrate import odeint
 
 def main():
@@ -11,6 +12,7 @@ def main():
     # Initialize model components
     renal_model = RenalModel(params)
     tubular_model = RenalTubular(params)
+    neural_control = NeuralControl(params)  # Initialize neural control
     renal_model.tubular_model = tubular_model  # Add tubular model to main model
     
     # Set simulation parameters
@@ -55,7 +57,14 @@ def main():
         'proximal_tubule_Na_reab_frac': params.prox_tubule_Na_reab_frac_nom,
         'loop_henle_Na_reab_frac': params.loop_henle_Na_reab_frac_nom,
         'distal_tubule_Na_reab_frac': params.distal_tubule_Na_reab_frac_nom,
-        'collecting_duct_Na_reab_frac': params.collecting_duct_Na_reab_frac_nom
+        'collecting_duct_Na_reab_frac': params.collecting_duct_Na_reab_frac_nom,
+        
+        # Neural parameters
+        'sympathetic_tone': params.sympathetic_tone_nom,
+        'parasympathetic_tone': params.parasympathetic_tone_nom,
+        'renal_symp_nerve_activity': params.renal_symp_nerve_activity_nom,
+        'heart_rate': 72.0,  # Initial heart rate (beats per minute)
+        'stroke_volume': 70.0  # Initial stroke volume (ml per beat)
     }
     
     # Convert initial state to list for ODE solver
@@ -80,7 +89,13 @@ def main():
         initial_state['blood_volume_water'],
         initial_state['plasma_K'],
         initial_state['plasma_osmolarity'],
-        initial_state['distal_Na_delivery']
+        initial_state['distal_Na_delivery'],
+        # Add neural parameters to state vector
+        initial_state['sympathetic_tone'],
+        initial_state['parasympathetic_tone'],
+        initial_state['renal_symp_nerve_activity'],
+        initial_state['heart_rate'],
+        initial_state['stroke_volume']
     ]
     
     # Run simulation
@@ -89,10 +104,12 @@ def main():
     
     solution = odeint(derivatives, state_vector, t)
     
-    # Calculate ADH at each time point
+    # Calculate ADH and neural parameters at each time point
     ADH_values = []
+    baroreceptor_firing_values = []
+    
     for i in range(len(t)):
-        # Only include the ODE state variables in the dictionary
+        # Create state dictionary from solution at time i
         state = {
             'blood_volume_L': solution[i,0],
             'cardiac_output_delayed': solution[i,1],
@@ -114,7 +131,13 @@ def main():
             'blood_volume_water': solution[i,17],
             'plasma_K': solution[i,18],
             'plasma_osmolarity': solution[i,19],
-            'distal_Na_delivery': solution[i,20]
+            'distal_Na_delivery': solution[i,20],
+            # Add neural parameters
+            'sympathetic_tone': solution[i,21],
+            'parasympathetic_tone': solution[i,22],
+            'renal_symp_nerve_activity': solution[i,23],
+            'heart_rate': solution[i,24],
+            'stroke_volume': solution[i,25]
         }
         
         # Add the tubular parameters that are calculated separately
@@ -126,59 +149,74 @@ def main():
             'collecting_duct_Na_reab_frac': params.collecting_duct_Na_reab_frac_nom
         })
         
+        # Calculate neural effects
+        neural_effects = neural_control.update_neural_state(state, t[i])
+        
+        # Calculate renal function with neural effects
         renal = renal_model.calculate_renal_vasculature(state, {
             'mean_arterial_pressure': state['mean_arterial_pressure']
         })
-        tubular = tubular_model.calculate_tubular_function(state, renal, t[i])
+        
+        # Calculate tubular function with neural effects
+        tubular = tubular_model.calculate_tubular_function(state, renal, t[i], neural_effects['renal_effects'])
+        
+        # Store values
         ADH_values.append(tubular['ADH'])
+        baroreceptor_firing_values.append(neural_effects['autonomic']['baroreceptor_firing_rate'])
     
     # Process results
     results = {
         'time': t,
-        'blood_pressure': solution[:, list(initial_state.keys()).index('mean_arterial_pressure')],
-        'cardiac_output': solution[:, list(initial_state.keys()).index('cardiac_output_delayed')],
-        'blood_volume': solution[:, list(initial_state.keys()).index('blood_volume_L')],
-        'plasma_Na': solution[:, list(initial_state.keys()).index('plasma_Na')],
-        'plasma_K': solution[:, list(initial_state.keys()).index('plasma_K')],
-        'plasma_osmolarity': solution[:, list(initial_state.keys()).index('plasma_osmolarity')],
-        'renin': solution[:, list(initial_state.keys()).index('renin')],
-        'angiotensin_I': solution[:, list(initial_state.keys()).index('angiotensin_I')],
-        'angiotensin_II': solution[:, list(initial_state.keys()).index('angiotensin_II')],
-        'aldosterone': solution[:, list(initial_state.keys()).index('aldosterone')],
-        'ADH': np.array(ADH_values)
+        'blood_pressure': solution[:, 3],  # mean_arterial_pressure
+        'cardiac_output': solution[:, 1],  # cardiac_output_delayed
+        'blood_volume': solution[:, 0],  # blood_volume_L
+        'plasma_Na': solution[:, 16],  # plasma_Na
+        'plasma_K': solution[:, 18],  # plasma_K
+        'plasma_osmolarity': solution[:, 19],  # plasma_osmolarity
+        'renin': solution[:, 4],  # renin
+        'angiotensin_I': solution[:, 5],  # angiotensin_I
+        'angiotensin_II': solution[:, 6],  # angiotensin_II
+        'aldosterone': solution[:, 7],  # aldosterone
+        'ADH': np.array(ADH_values),
+        'sympathetic_tone': solution[:, 21],  # sympathetic_tone
+        'parasympathetic_tone': solution[:, 22],  # parasympathetic_tone
+        'renal_symp_nerve_activity': solution[:, 23],  # renal_symp_nerve_activity
+        'heart_rate': solution[:, 24],  # heart_rate
+        'stroke_volume': solution[:, 25],  # stroke_volume
+        'baroreceptor_firing_rate': np.array(baroreceptor_firing_values)
     }
     
-    # Create plots
-    plt.figure(figsize=(15, 20))
+    # Create plots (original 8 panels plus neural mechanisms panels)
+    plt.figure(figsize=(15, 25))
     
     # Hemodynamics
-    plt.subplot(4, 2, 1)
+    plt.subplot(5, 2, 1)
     plt.plot(t/60, results['blood_pressure'])
     plt.title('Mean Arterial Pressure')
     plt.xlabel('Time (hours)')
     plt.ylabel('Pressure (mmHg)')
     
-    plt.subplot(4, 2, 2)
+    plt.subplot(5, 2, 2)
     plt.plot(t/60, results['cardiac_output'])
     plt.title('Cardiac Output')
     plt.xlabel('Time (hours)')
     plt.ylabel('Flow (L/min)')
     
     # Volume and electrolytes
-    plt.subplot(4, 2, 3)
+    plt.subplot(5, 2, 3)
     plt.plot(t/60, results['blood_volume'])
     plt.title('Blood Volume')
     plt.xlabel('Time (hours)')
     plt.ylabel('Volume (L)')
     
-    plt.subplot(4, 2, 4)
+    plt.subplot(5, 2, 4)
     plt.plot(t/60, results['plasma_Na'])
     plt.title('Plasma Sodium')
     plt.xlabel('Time (hours)')
     plt.ylabel('Concentration (mEq/L)')
     
     # RAAS system
-    plt.subplot(4, 2, 5)
+    plt.subplot(5, 2, 5)
     plt.plot(t/60, results['renin'], label='Renin')
     plt.plot(t/60, results['angiotensin_I'], label='AngI')
     plt.plot(t/60, results['angiotensin_II'], label='AngII')
@@ -187,28 +225,79 @@ def main():
     plt.ylabel('Normalized Level')
     plt.legend()
     
-    plt.subplot(4, 2, 6)
+    plt.subplot(5, 2, 6)
     plt.plot(t/60, results['aldosterone'])
     plt.title('Aldosterone')
     plt.xlabel('Time (hours)')
     plt.ylabel('Normalized Level')
     
     # Other hormones and electrolytes
-    plt.subplot(4, 2, 7)
+    plt.subplot(5, 2, 7)
     plt.plot(t/60, results['ADH'])
     plt.title('ADH (Vasopressin)')
     plt.xlabel('Time (hours)')
     plt.ylabel('Normalized Level')
     
-    plt.subplot(4, 2, 8)
+    plt.subplot(5, 2, 8)
     plt.plot(t/60, results['plasma_osmolarity'])
     plt.title('Plasma Osmolarity')
     plt.xlabel('Time (hours)')
     plt.ylabel('mOsm/L')
     
+    # Neural mechanisms
+    plt.subplot(5, 2, 9)
+    plt.plot(t/60, results['sympathetic_tone'], label='Sympathetic')
+    plt.plot(t/60, results['parasympathetic_tone'], label='Parasympathetic')
+    plt.title('Autonomic Tone')
+    plt.xlabel('Time (hours)')
+    plt.ylabel('Normalized Level')
+    plt.legend()
+    
+    plt.subplot(5, 2, 10)
+    plt.plot(t/60, results['heart_rate'])
+    plt.title('Heart Rate')
+    plt.xlabel('Time (hours)')
+    plt.ylabel('beats/min')
+    
+    # Save the expanded figure with neural mechanisms
     plt.tight_layout()
     plt.savefig('renal_simulation_results.png')
     plt.close()
+    
+    # Create a separate figure for neural mechanisms details
+    plt.figure(figsize=(15, 10))
+    
+    plt.subplot(2, 2, 1)
+    plt.plot(t/60, results['sympathetic_tone'], label='Sympathetic')
+    plt.plot(t/60, results['parasympathetic_tone'], label='Parasympathetic')
+    plt.title('Autonomic Tone')
+    plt.xlabel('Time (hours)')
+    plt.ylabel('Normalized Level')
+    plt.legend()
+    
+    plt.subplot(2, 2, 2)
+    plt.plot(t/60, results['heart_rate'], label='Heart Rate')
+    plt.plot(t/60, results['stroke_volume'], label='Stroke Volume')
+    plt.title('Cardiac Function')
+    plt.xlabel('Time (hours)')
+    plt.ylabel('HR (bpm) / SV (ml)')
+    plt.legend()
+    
+    plt.subplot(2, 2, 3)
+    plt.plot(t/60, results['renal_symp_nerve_activity'])
+    plt.title('Renal Sympathetic Nerve Activity')
+    plt.xlabel('Time (hours)')
+    plt.ylabel('Normalized Level')
+    
+    plt.subplot(2, 2, 4)
+    plt.plot(t/60, results['baroreceptor_firing_rate'])
+    plt.title('Baroreceptor Firing Rate')
+    plt.xlabel('Time (hours)')
+    plt.ylabel('Normalized Activity')
+    
+    plt.tight_layout()
+    plt.savefig('neural_mechanisms_results.png')
+    plt.close()
 
 if __name__ == "__main__":
-    main() 
+    main()
